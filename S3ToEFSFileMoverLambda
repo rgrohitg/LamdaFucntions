@@ -1,0 +1,56 @@
+/*This code defines a Lambda function that implements the RequestHandler interface and takes an S3EventNotification as input. It uses the AmazonS3 client to retrieve the S3 object specified in the S3 event, and then writes the contents of the object to a file in the specified EFS mount path.
+
+To use this code as a Lambda function, you can package it as a JAR file and upload it to AWS Lambda. You will also need to configure the function to be triggered by S3 events, and specify the S3 bucket and prefix that should trigger the function.*/
+
+import com.amazonaws.services.lambda.runtime.Context;
+import com.amazonaws.services.lambda.runtime.RequestHandler;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.event.S3EventNotification;
+import com.amazonaws.services.s3.model.S3Object;
+import com.amazonaws.services.s3.model.S3ObjectInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+public class S3ToEFSFileMoverLambda implements RequestHandler<S3EventNotification, String> {
+    private static final String EFS_MOUNT_PATH = "/mnt/efs/destination-folder";
+    
+    public String handleRequest(S3EventNotification s3EventNotification, Context context) {
+        AmazonS3 s3Client = AmazonS3ClientBuilder.standard().build();
+        S3EventNotification.S3Entity s3Entity = s3EventNotification.getRecords().get(0).getS3();
+        String s3BucketName = s3Entity.getBucket().getName();
+        String s3Key = s3Entity.getObject().getKey();
+        
+        try {
+            S3Object s3Object = s3Client.getObject(s3BucketName, s3Key);
+            S3ObjectInputStream s3ObjectInputStream = s3Object.getObjectContent();
+            Path efsFilePath = Paths.get(EFS_MOUNT_PATH, s3Key);
+            
+            if(!Files.exists(efsFilePath.getParent())) {
+                Files.createDirectories(efsFilePath.getParent());
+            }
+            
+            FileOutputStream fileOutputStream = new FileOutputStream(new File(efsFilePath.toString()));
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = s3ObjectInputStream.read(buffer)) != -1) {
+                fileOutputStream.write(buffer, 0, bytesRead);
+            }
+            
+            fileOutputStream.close();
+            s3ObjectInputStream.close();
+            
+            System.out.println("File moved successfully from S3 to EFS!");
+            
+        } catch (IOException ioe) {
+            System.out.println("Caught an IOException while writing the file to EFS");
+            System.out.println("Error Message: " + ioe.getMessage());
+        }
+        
+        return "File moved successfully from S3 to EFS!";
+    }
+}
